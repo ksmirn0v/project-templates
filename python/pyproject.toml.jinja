@@ -1,0 +1,85 @@
+[project]
+name = "{{ distribution_name }}"
+version = "0.1.0"
+description = "{{ description }}"
+readme = "README.md"
+requires-python = ">={{ python_version }}"
+dependencies = [
+{%- if use_pydantic %}
+    "pydantic>=2.9",
+{%- endif %}
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17",
+    "mypy>=1.15",
+    "pytest>=8",
+    "pytest-cov>=6",
+    "pre-commit>=4",
+]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+{%- if namespace %}
+module-name = "{{ import_path }}"  # src/{{ namespace }}/ is a namespace: no __init__.py there
+{%- else %}
+module-name = "{{ import_path }}"
+{%- endif %}
+
+# --- Ruff: lint + format -------------------------------------------
+[tool.ruff]
+line-length = 120
+target-version = "py{{ python_version | replace('.', '') }}"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "N",        # pep8-naming
+    "SIM",      # simplify
+    "C4",       # comprehensions
+    "RUF",      # ruff-specific
+    "PTH",      # use pathlib
+    "S",        # bandit security
+    "D",        # docstrings
+]
+ignore = ["D100", "D104", "D105", "D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "D"]  # asserts and no docstrings in tests
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
+
+# --- mypy ----------------------------------------------------------
+[tool.mypy]
+python_version = "{{ python_version }}"
+strict = true
+files = ["src", "tests"]
+mypy_path = "src"
+{%- if namespace %}
+explicit_package_bases = true  # resolve the {{ namespace }} namespace
+{%- endif %}
+{%- if use_pydantic %}
+plugins = ["pydantic.mypy"]
+{%- endif %}
+
+# --- pytest --------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --cov={{ import_path }} --cov-report=term-missing"
+
+[tool.coverage.report]
+fail_under = 80

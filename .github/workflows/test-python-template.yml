@@ -1,0 +1,52 @@
+# Renders every option combination from the python/ template and runs its checks,
+# so a broken template never reaches anyone.
+name: Test Python template
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render-and-check:
+    name: pydantic=${{ matrix.use_pydantic }} / ns=${{ matrix.namespace || 'none' }} / py${{ matrix.python_version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        use_pydantic: [false, true]
+        namespace: ["", "acme"]
+        python_version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: template
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Render template from this commit
+        env:
+          USE_PYDANTIC: ${{ matrix.use_pydantic }}
+          NAMESPACE: ${{ matrix.namespace }}
+          PYTHON_VERSION: ${{ matrix.python_version }}
+        run: |
+          uvx copier copy --defaults --vcs-ref HEAD \
+            --data project_name="demo" \
+            --data description="Template smoke test" \
+            --data use_pydantic="$USE_PYDANTIC" \
+            --data namespace="$NAMESPACE" \
+            --data python_version="$PYTHON_VERSION" \
+            template "$RUNNER_TEMP/demo"
+
+      - name: Install and run checks
+        run: |
+          cd "$RUNNER_TEMP/demo"
+          git init -q && git add -A
+          uv sync
+          make check
+          uv run pre-commit run --all-files

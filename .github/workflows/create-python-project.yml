@@ -1,0 +1,150 @@
+# Creates a new repository from the python/ template, in this repository's owner
+# or in another GitHub organization given by the github_org input.
+# Run it from the Actions tab: "Create Python project" -> "Run workflow".
+# Requires the PROJECT_CREATOR_TOKEN secret (see README.md).
+name: Create Python project
+
+on:
+  workflow_dispatch:
+    inputs:
+      github_org:
+        description: "Under which organization you'd like to create a project?"
+        required: false
+        type: string
+        default: ""
+      project_name:
+        description: "What is your project name (kebab-case)?"
+        required: true
+        type: string
+      description:
+        description: "What is your project description?"
+        required: true
+        type: string
+      python_version:
+        description: "What Python version do you want to use?"
+        required: true
+        type: choice
+        options: [ "3.12", "3.13" ]
+        default: "3.12"
+      namespace:
+        description: "What is your package namespace (src/<namespace>/<package>)? Leave empty for src/<package>"
+        required: false
+        type: string
+        default: ""
+      visibility:
+        description: "What's the level of visibility do you want to choose for the repository?"
+        required: true
+        type: choice
+        options: [ private, internal ]
+        default: private
+      use_pydantic:
+        description: "Do you want to add Pydantic as a dependency?"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: create-project-${{ inputs.github_org || github.repository_owner }}-${{ inputs.project_name }}
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    env:
+      ORGANIZATION: ${{ inputs.github_org || github.repository_owner }}
+      PROJECT_NAME: ${{ inputs.project_name }}
+      DESCRIPTION: ${{ inputs.description }}
+      PYTHON_VERSION: ${{ inputs.python_version }}
+      NAMESPACE: ${{ inputs.namespace }}
+      VISIBILITY: ${{ inputs.visibility }}
+      USE_PYDANTIC: ${{ inputs.use_pydantic }}
+      TEMPLATE_REPO: ${{ github.repository }}
+    steps:
+      - name: Validate inputs
+        env:
+          PROJECT_CREATOR_TOKEN: ${{ secrets.PROJECT_CREATOR_TOKEN }}
+        run: |
+          if [ -z "$PROJECT_CREATOR_TOKEN" ]; then
+            echo "::error::Secret PROJECT_CREATOR_TOKEN is not set. See README.md."
+            exit 1
+          fi
+          if ! [[ "$ORGANIZATION" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]]; then
+            echo "::error::Invalid GitHub organization '$ORGANIZATION'."
+            exit 1
+          fi
+          if ! gh api "users/$ORGANIZATION" >/dev/null 2>&1; then
+            echo "::error::GitHub organization '$ORGANIZATION' does not exist or is not visible to PROJECT_CREATOR_TOKEN."
+            exit 1
+          fi
+          if ! [[ "$PROJECT_NAME" =~ ^[a-z][a-z0-9]*(-[a-z0-9]+)*$ ]]; then
+            echo "::error::Invalid project name '$PROJECT_NAME': use lowercase letters, digits and single dashes."
+            exit 1
+          fi
+          if [ -n "$NAMESPACE" ] && ! [[ "$NAMESPACE" =~ ^[a-z][a-z0-9_]*$ ]]; then
+            echo "::error::Invalid namespace '$NAMESPACE': use lowercase letters, digits and underscores."
+            exit 1
+          fi
+          if [[ "$DESCRIPTION" == *'"'* || "$DESCRIPTION" == *'\'* ]]; then
+            echo "::error::Please avoid double quotes and backslashes in the description."
+            exit 1
+          fi
+          if gh repo view "$ORGANIZATION/$PROJECT_NAME" >/dev/null 2>&1; then
+            echo "::error::Repository $ORGANIZATION/$PROJECT_NAME already exists."
+            exit 1
+          fi
+
+      - name: Check out template
+        uses: actions/checkout@v7
+        with:
+          path: template
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Render template
+        run: |
+          uvx copier copy --defaults \
+            --data language=python \
+            --data project_name="$PROJECT_NAME" \
+            --data description="$DESCRIPTION" \
+            --data python_version="$PYTHON_VERSION" \
+            --data namespace="$NAMESPACE" \
+            --data use_pydantic="$USE_PYDANTIC" \
+            template "$RUNNER_TEMP/$PROJECT_NAME"
+          # Point future `copier update` runs at GitHub, not at this runner's path.
+          sed -i "s|^_src_path: .*|_src_path: gh:$TEMPLATE_REPO|" "$RUNNER_TEMP/$PROJECT_NAME/.copier-answers.yml"
+
+      - name: Lock dependencies and verify the project
+        run: |
+          cd "$RUNNER_TEMP/$PROJECT_NAME"
+          uv lock
+          uv sync --locked
+          make check
+
+      - name: Create repository and push
+        env:
+          PROJECT_CREATOR_TOKEN: ${{ secrets.PROJECT_CREATOR_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          cd "$RUNNER_TEMP/$PROJECT_NAME"
+          git init -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Initial commit from project-templates" \
+                     -m "Requested by $ACTOR via $RUN_URL"
+          gh auth setup-git
+          gh repo create "$ORGANIZATION/$PROJECT_NAME" "--$VISIBILITY" \
+            --description "$DESCRIPTION" \
+            --source . --remote origin --push
+          {
+            echo "### Created [$ORGANIZATION/$PROJECT_NAME](https://github.com/$ORGANIZATION/$PROJECT_NAME)"
+            echo
+            echo '```bash'
+            echo "git clone https://github.com/$ORGANIZATION/$PROJECT_NAME && cd $PROJECT_NAME && make install"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

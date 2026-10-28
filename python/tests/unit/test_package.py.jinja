@@ -1,0 +1,6 @@
+import {{ import_path }}
+
+
+def test_public_api() -> None:
+    assert {{ import_path }}.greet("Ada") == "Hello, Ada!"
+    assert {{ import_path }}.__version__

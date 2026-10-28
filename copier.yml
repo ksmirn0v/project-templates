@@ -1,0 +1,71 @@
+_min_copier_version: "9.0"
+_subdirectory: "{{ language }}"
+_templates_suffix: .jinja
+_answers_file: .copier-answers.yml
+
+language:
+  type: str
+  help: Which template do you want to use?
+  choices:
+    - python
+  default: python
+
+project_name:
+  type: str
+  help: What is your project name (kebab-case)?
+  validator: >-
+    {% if not (project_name | regex_search('^[a-z][a-z0-9]*(-[a-z0-9]+)*$')) %}
+      use lowercase letters, digits and single dashes, starting with a letter!
+    {% endif %}
+
+description:
+  type: str
+  help: What is your project description?
+  default: "TODO: describe this project"
+  validator: >-
+    {% if '"' in description or '\\' in description %}
+      avoid double quotes and backslashes!
+    {% endif %}
+
+python_version:
+  type: str
+  help: What Python version do you want to use?
+  choices:
+    - "3.12"
+    - "3.13"
+  default: "3.13"
+
+use_pydantic:
+  type: bool
+  help: Do you want to add Pydantic as a dependency?
+  default: false
+
+namespace:
+  type: str
+  help: What is your package namespace (src/<namespace>/<package>)? Leave empty for src/<package>.
+  default: ""
+  validator: >-
+    {% if namespace and not (namespace | regex_search('^[a-z][a-z0-9_]*$')) %}
+      use lowercase letters, digits and underscores, starting with a letter!
+    {% endif %}
+
+# --- Derived values (never asked) ----------------------------------
+package_name:
+  type: str
+  default: "{{ project_name | replace('-', '_') }}"
+  when: false
+
+distribution_name:
+  type: str
+  default: "{{ project_name }}"
+  when: false
+
+import_path:
+  type: str
+  default: "{{ namespace ~ '.' if namespace else '' }}{{ package_name }}"
+  when: false
+
+package_dir:
+  type: str
+  default: "{{ import_path | replace('.', '/') }}"
+  when: false
