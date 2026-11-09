@@ -64,9 +64,9 @@ jobs:
     steps:
       - name: Validate inputs
         env:
-          PROJECT_CREATOR_TOKEN: ${{ secrets.PROJECT_CREATOR_TOKEN }}
+          GH_TOKEN: ${{ secrets.PROJECT_CREATOR_TOKEN }} # the gh CLI reads its token from GH_TOKEN
         run: |
-          if [ -z "$PROJECT_CREATOR_TOKEN" ]; then
+          if [ -z "$GH_TOKEN" ]; then
             echo "::error::Secret PROJECT_CREATOR_TOKEN is not set. See README.md."
             exit 1
           fi
@@ -74,8 +74,8 @@ jobs:
             echo "::error::Invalid GitHub organization '$ORGANIZATION'."
             exit 1
           fi
-          if ! gh api "users/$ORGANIZATION" >/dev/null 2>&1; then
-            echo "::error::GitHub organization '$ORGANIZATION' does not exist or is not visible to PROJECT_CREATOR_TOKEN."
+          if ! output=$(gh api "users/$ORGANIZATION" 2>&1); then
+            echo "::error::Cannot access GitHub organization '$ORGANIZATION' with PROJECT_CREATOR_TOKEN: $output"
             exit 1
           fi
           if ! [[ "$PROJECT_NAME" =~ ^[a-z][a-z0-9]*(-[a-z0-9]+)*$ ]]; then
@@ -126,7 +126,7 @@ jobs:
 
       - name: Create repository and push
         env:
-          PROJECT_CREATOR_TOKEN: ${{ secrets.PROJECT_CREATOR_TOKEN }}
+          GH_TOKEN: ${{ secrets.PROJECT_CREATOR_TOKEN }}
           ACTOR: ${{ github.actor }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
