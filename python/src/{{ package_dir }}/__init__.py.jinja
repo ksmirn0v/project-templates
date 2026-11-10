@@ -4,6 +4,7 @@ from importlib.metadata import version
 
 from {{ import_path }}.core import greet
 
+
 __all__ = ["__version__", "greet"]
 
 __version__ = version("{{ distribution_name }}")

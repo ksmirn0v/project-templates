@@ -1,0 +1,3 @@
+# Tests inherit the project settings, but allow long given/when/then test names.
+extend = "../pyproject.toml"
+line-length = 160

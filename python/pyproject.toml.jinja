@@ -7,6 +7,7 @@ requires-python = ">={{ python_version }}"
 dependencies = [
 {%- if use_pydantic %}
     "pydantic>=2.9",
+    "pydantic-settings>=2.6",
 {%- endif %}
 ]
 
@@ -17,6 +18,7 @@ dev = [
     "pytest>=8",
     "pytest-cov>=6",
     "pre-commit>=4",
+    "pytest-bdd>=9.0.1",
 ]
 
 [build-system]
@@ -53,6 +55,9 @@ select = [
 ]
 ignore = ["D100", "D104", "D105", "D107"]
 
+[tool.ruff.lint.isort]
+lines-after-imports = 2  # two blank lines between imports and module-level constants
+
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
@@ -68,7 +73,7 @@ docstring-code-format = true
 python_version = "{{ python_version }}"
 strict = true
 files = ["src", "tests"]
-mypy_path = "src"
+mypy_path = ["src", "tests"]
 {%- if namespace %}
 explicit_package_bases = true  # resolve the {{ namespace }} namespace
 {%- endif %}
@@ -80,6 +85,7 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --cov={{ import_path }} --cov-report=term-missing"
+bdd_features_base_dir = "tests/integration/features"
 
 [tool.coverage.report]
 fail_under = 80
