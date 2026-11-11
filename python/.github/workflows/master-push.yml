@@ -1,0 +1,82 @@
+name: Master push
+
+# Releases every merge to master:
+#   checks -> version tag (from the merged PR title: [MAJOR] / [MINOR] / [PATCH]).
+# A title without a prefix is no release: only the checks run (no tag).
+# The git tag is created once the checks pass, so a version always belongs to exactly one commit,
+# and a re-run of a failed run reuses the version of its commit.
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+# Releases run one at a time and are never cancelled half-way.
+concurrency:
+  group: master-push
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  checks:
+    name: Lint, Type Checks and Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Checks
+        run: make check
+
+  version:
+    name: Version Tag
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write  # push the tag
+      pull-requests: read  # title of the merged pull request
+    outputs:
+      version: ${{ steps.tag.outputs.version }}  # empty: no release
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # all tags
+
+      - name: Create the version tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          versions() { grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1; }
+
+          # A re-run of this commit keeps the version it already got.
+          version=$(git tag --points-at "$GITHUB_SHA" | versions || true)
+          if [[ -n "$version" ]]; then
+            echo "Commit already tagged $version" >> "$GITHUB_STEP_SUMMARY"
+          else
+            title=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].title // ""')
+            latest=$(git tag --list | versions || true)
+            version=$(.github/scripts/next-version.sh "$title" "$latest")
+            if [[ -z "$version" ]]; then
+              echo "No version prefix, no release: $title" >> "$GITHUB_STEP_SUMMARY"
+            else
+              git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                tag --annotate "$version" --message "$title" "$GITHUB_SHA"
+              git push origin "refs/tags/$version"
+              echo "Tagged $version (previous: ${latest:-none}) from: $title" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"

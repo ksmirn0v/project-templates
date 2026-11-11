@@ -1,0 +1,64 @@
+name: Pull request
+
+# The title check (it decides the release version on merge, see master-push.yml) and the checks.
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+# A newer push to the pull request cancels the run that is still going.
+concurrency:
+  group: pull-request-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  title:
+    name: Title Version Prefix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read  # the current title
+    steps:
+      - uses: actions/checkout@v7
+
+      # Read now, not from the event: after editing the title, re-run this job to check it again.
+      # [MAJOR] / [MINOR] / [PATCH] release on merge; no prefix releases nothing; any other prefix fails.
+      - name: Check the title's version prefix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)
+          version=$(.github/scripts/next-version.sh "$title" "")  # fails the step on an invalid prefix
+          if [[ -n "$version" ]]; then
+            message="Merging releases a new version (${title%%]*}])"
+          else
+            message="No version prefix: merging releases nothing"
+          fi
+          echo "::notice::$message"
+          echo "$message" >> "$GITHUB_STEP_SUMMARY"
+
+  checks:
+    name: Lint, Type Checks and Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Checks
+        run: make check

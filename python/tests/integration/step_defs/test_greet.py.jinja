@@ -1,0 +1,55 @@
+from dataclasses import dataclass
+
+import pytest
+from pytest_bdd import given, parsers, scenarios, then, when
+
+from {{ import_path }}.app import greet
+
+
+scenarios("greet.feature")
+
+
+@dataclass
+class GreetingRequest:
+    name: str = ""
+    greeting: str | None = None
+    error: ValueError | None = None
+
+
+@pytest.fixture
+def greeting_request() -> GreetingRequest:
+    return GreetingRequest()
+
+
+# ---------- given ----------
+
+
+@given(name=parsers.parse(name='the name "{name}"'))
+def a_name(greeting_request: GreetingRequest, name: str) -> None:
+    greeting_request.name = name
+
+
+# ---------- when ----------
+
+
+@when(name="the greeting is requested")
+def request_greeting(greeting_request: GreetingRequest) -> None:
+    try:
+        greeting_request.greeting = greet(name=greeting_request.name)
+    except ValueError as error:
+        greeting_request.error = error
+
+
+# ---------- then ----------
+
+
+@then(name=parsers.parse(name='the greeting is "{expected}"'))
+def greeting_is(greeting_request: GreetingRequest, expected: str) -> None:
+    assert greeting_request.error is None
+    assert greeting_request.greeting == expected
+
+
+@then(name=parsers.parse(name='the request fails with "{message}"'))
+def request_fails(greeting_request: GreetingRequest, message: str) -> None:
+    assert greeting_request.greeting is None
+    assert str(greeting_request.error) == message

@@ -1,4 +1,4 @@
-"""Core business logic: pure functions, no I/O, easy to test."""
+"""Application entry point: the main logic of the project."""
 
 
 def greet(name: str) -> str:

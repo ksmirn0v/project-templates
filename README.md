@@ -54,7 +54,8 @@ The resulting project has the following structure:
 ├── tests/unit/
     ├── integration/
     ├── unit/
-├── .github/workflows/ci.yml
+├── .github/scripts/next-version.sh
+├── .github/workflows/ (branch-push.yml, pull-request.yml, master-push.yml)
 ├── .pre-commit-config.yaml  
 ├── .python-version
 ├── Makefile
