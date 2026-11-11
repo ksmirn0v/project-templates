@@ -1,0 +1,6 @@
+Feature: Invocation
+  The function processes an event and returns its result.
+
+  Scenario: An event is processed
+    When the function is invoked with {"key": "value"}
+    Then the result is {"status": "ok"}

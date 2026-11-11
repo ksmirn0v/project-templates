@@ -1,0 +1,10 @@
+# Used for builds with -f infra/docker/Dockerfile (paths are relative to the repository root).
+# Only what the images need; .venv, .env, .git, caches and IDE files stay out.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!tests/
+**/__pycache__
+**/.pytest_cache

@@ -1,0 +1,73 @@
+name: Deploy prod
+
+# Deploys a release to prod, by hand: Actions -> Deploy prod -> Run workflow, and pick the version
+# tag (e.g. 1.4.2) under "Use workflow from"; or `gh workflow run deploy-prod.yml --ref 1.4.2`.
+# The tag selects the image `{{ ecr_repository }}:<tag>` pushed by master-push.yml;
+# an older tag rolls prod back. Branches are refused.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Prod deploys run one at a time and are never cancelled half-way.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  AWS_REGION: {{ aws_region }}
+  AWS_ROLE_ARN: arn:aws:iam::{{ aws_account_id }}:role/{{ aws_deploy_role_name }}-prod
+  ECR_REGISTRY: {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
+  ECR_REPOSITORY: {{ ecr_repository }}
+  FUNCTION_NAME: {{ aws_function_name }}-prod
+{%- raw %}
+  VERSION: ${{ github.ref_name }}
+
+jobs:
+  deploy:
+    name: Deploy ${{ github.ref_name }} to Prod
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod  # the prod role trusts only this environment; add required reviewers there if available
+    permissions:
+      contents: read
+      id-token: write  # GitHub OIDC token for AWS
+    steps:
+      - name: Check the version tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          if [[ "$REF_TYPE" != "tag" || ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Run this workflow from a version tag (major.minor.patch), not the $REF_TYPE '$VERSION'"
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check the image
+        run: |
+          found=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$VERSION" \
+            --query 'length(images)' --output text)
+          if [[ "$found" != "1" ]]; then
+            echo "::error::No image $ECR_REPOSITORY:$VERSION in ECR (did master-push finish for this version?)"
+            exit 1
+          fi
+
+      - name: Deploy the image
+        run: |
+          previous=$(aws lambda get-function --function-name "$FUNCTION_NAME" --query 'Code.ImageUri' --output text)
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --image-uri "$ECR_REGISTRY/$ECR_REPOSITORY:$VERSION" \
+            --query '{Function: FunctionName, Image: CodeSha256}' --output text
+          aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME"
+          echo "Deployed $VERSION to $FUNCTION_NAME (previous image: ${previous##*/})" >> "$GITHUB_STEP_SUMMARY"
+{%- endraw %}

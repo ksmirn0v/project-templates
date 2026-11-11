@@ -11,6 +11,13 @@ The following table lists currently available templates:
 | ---------- | ----------------------- |
 | `./python` | a shared template for Python projects 
 
+The Python template asks for a `template`:
+
+| `template` | Description |
+| ---------- | ----------- |
+| `generic`  | a generic Python package (default) |
+| `lambda`   | an AWS Lambda function as a container image |
+
 
 ## Create a new Python project
 
@@ -29,7 +36,9 @@ make check
 
 ### GitHub Actions
 
-1. Open **Actions → Create Python project → Run workflow**
+1. Run two options:
+   - **Actions → Create Python project** → **Run workflow**
+   - **Actions → Create Python Lambda project** → **Run workflow**
 2. Fill in the necessary parameters
 3. The workflow does the following tasks:
    - renders the template
@@ -46,8 +55,7 @@ Choose `repo` and `workflow` scopes.
 
 ## Result
 
-The resulting project has the following structure:
-
+The resulting project has the following base structure:
 ```text
 <project-name>/
 ├── src/<project-name>/
@@ -63,9 +71,17 @@ The resulting project has the following structure:
 └── .copier-answers.yml
 ```
 
+A `lambda` project also adds:
+```
+<project-name>/
+├── infra/docker/Dockerfile
+├── tests/e2e/
+├── .github/workflows/deploy-test.yml
+├── .github/workflows/deploy-prod.yml
+```
+
 Setting a `namespace` (empty by default)
 leads to an additional level in the `src` directory:
-
 ```text
 <project-name>/
 ├── src/<namespace/<project-name>/

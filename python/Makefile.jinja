@@ -1,0 +1,49 @@
+# Commands
+{%- if template == 'lambda' %}
+.PHONY: install fmt lint type test e2e check build image image-test
+
+# Docker images, built from the repository root with infra/docker/Dockerfile
+DOCKERFILE := infra/docker/Dockerfile
+IMAGE_NAME ?= {{ project_name }}
+IMAGE_TAG ?= $(shell git rev-parse --short=12 HEAD)
+PLATFORM ?= linux/arm64
+{%- else %}
+.PHONY: install fmt lint type test check build
+{%- endif %}
+
+install: ## Create the venv, install deps and git hooks
+	uv sync
+	uv run pre-commit install
+
+fmt: ## Format code and apply safe lint fixes
+	uv run ruff format .
+	uv run ruff check --fix .
+
+lint: ## Lint and check formatting (no changes)
+	uv run ruff check .
+	uv run ruff format --check .
+
+type: ## Static type checks
+	uv run mypy
+
+test: ## Run tests with coverage
+	uv run pytest
+{%- if template == 'lambda' %}
+
+e2e: ## E2E tests against a deployed function, e.g. make e2e E2E_FUNCTION_NAME={{ aws_function_name }}-test
+	uv run pytest tests/e2e --no-cov
+{%- endif %}
+
+check: lint type test ## Everything CI runs
+
+build: ## Build wheel and sdist into dist/
+	uv build
+{%- if template == 'lambda' %}
+
+image: ## Build the Lambda image for $(PLATFORM), tagged with the git commit
+	docker build -f $(DOCKERFILE) --platform $(PLATFORM) --target runtime -t $(IMAGE_NAME):$(IMAGE_TAG) .
+
+image-test: ## Build the test image and run the test suite in a container
+	docker build -f $(DOCKERFILE) --platform $(PLATFORM) --target test -t $(IMAGE_NAME):$(IMAGE_TAG)-test .
+	docker run --rm --platform $(PLATFORM) $(IMAGE_NAME):$(IMAGE_TAG)-test
+{%- endif %}

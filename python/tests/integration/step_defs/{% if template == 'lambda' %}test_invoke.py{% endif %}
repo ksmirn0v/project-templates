@@ -1,0 +1,37 @@
+import json
+from dataclasses import dataclass, field
+from typing import Any
+
+import pytest
+from pytest_bdd import parsers, scenarios, then, when
+
+from conftest import InvokeFunction
+
+
+scenarios("invoke.feature")
+
+
+@dataclass
+class Invocation:
+    result: dict[str, Any] = field(default_factory=dict)
+
+
+@pytest.fixture
+def invocation() -> Invocation:
+    return Invocation()
+
+
+# ---------- when ----------
+
+
+@when(name=parsers.parse(name="the function is invoked with {event}"))
+def function_is_invoked(invocation: Invocation, invoke_function: InvokeFunction, event: str) -> None:
+    invocation.result = invoke_function(json.loads(s=event))
+
+
+# ---------- then ----------
+
+
+@then(name=parsers.parse(name="the result is {result}"))
+def result_is(invocation: Invocation, result: str) -> None:
+    assert invocation.result == json.loads(s=result)

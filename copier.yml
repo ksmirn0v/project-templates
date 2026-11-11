@@ -10,6 +10,14 @@ language:
     - python
   default: python
 
+template:
+  type: str
+  help: What kind of Python project do you want to create?
+  choices:
+    Generic Python project: generic
+    AWS Lambda function: lambda
+  default: generic
+
 project_name:
   type: str
   help: What is your project name (kebab-case)?
@@ -49,6 +57,25 @@ namespace:
       use lowercase letters, digits and underscores, starting with a letter!
     {% endif %}
 
+aws_account_id:
+  type: str
+  help: What is the AWS account ID (12 digits)?
+  when: "{{ template == 'lambda' }}"
+  validator: >-
+    {% if not (aws_account_id | regex_search('^[0-9]{12}$')) %}
+      use the 12-digit AWS account ID!
+    {% endif %}
+
+aws_region:
+  type: str
+  help: What is the AWS region?
+  default: eu-central-1
+  when: "{{ template == 'lambda' }}"
+  validator: >-
+    {% if not (aws_region | regex_search('^[a-z]{2}(-[a-z]+)+-[0-9]$')) %}
+      use an AWS region name, e.g. eu-central-1!
+    {% endif %}
+
 # --- Derived values (never asked) ----------------------------------
 package_name:
   type: str
@@ -68,4 +95,22 @@ import_path:
 package_dir:
   type: str
   default: "{{ import_path | replace('.', '/') }}"
+  when: false
+
+# AWS names of a Lambda project, e.g. for namespace nb1 and project wearables-webhook-receiver:
+# function nb1-wearables-webhook-receiver-<env>, ECR repository nb1/wearables-webhook-receiver,
+# deploy role nb1-github-wearables-webhook-receiver-deploy-<env>
+aws_function_name:
+  type: str
+  default: "{{ namespace ~ '-' if namespace else '' }}{{ project_name }}"
+  when: false
+
+ecr_repository:
+  type: str
+  default: "{{ namespace ~ '/' if namespace else '' }}{{ project_name }}"
+  when: false
+
+aws_deploy_role_name:
+  type: str
+  default: "{{ namespace ~ '-' if namespace else '' }}github-{{ project_name }}-deploy"
   when: false

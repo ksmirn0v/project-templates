@@ -1,0 +1,33 @@
+"""Lambda entry point.
+
+The function does not assume a trigger: it can be invoked directly or by any event source
+(API Gateway, Function URL, SQS, SNS, EventBridge, S3, ...). Replace ``handle`` with the
+project's logic. For a specific source, Powertools has typed events
+(``aws_lambda_powertools.utilities.data_classes``), batch processing for queues and streams
+(``aws_lambda_powertools.utilities.batch``) and HTTP routing (``aws_lambda_powertools.event_handler``).
+"""
+
+from typing import Any
+
+from aws_lambda_powertools.utilities.typing import LambdaContext
+
+from {{ import_path }}.config.log import logger
+
+
+def handle(event: dict[str, Any]) -> dict[str, Any]:
+    """Process one event.
+
+    Args:
+        event: The invocation payload, as sent by the caller or the event source.
+
+    Returns:
+        The invocation result, returned to the caller.
+    """
+    logger.info("Event received", extra={"event_keys": sorted(event)})
+    return {"status": "ok"}
+
+
+@logger.inject_lambda_context(clear_state=True)
+def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
+    """Entry point called by the Lambda runtime; adds the invocation context to the logs."""
+    return handle(event=event)

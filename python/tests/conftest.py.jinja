@@ -1,0 +1,33 @@
+"""Shared pytest fixtures."""
+{%- if template == 'lambda' %}
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, cast
+
+import pytest
+from aws_lambda_powertools.utilities.typing import LambdaContext
+
+from {{ import_path }} import app
+
+
+InvokeFunction = Callable[[dict[str, Any]], dict[str, Any]]
+
+
+@dataclass
+class FakeContext:
+    function_name: str = "test"
+    memory_limit_in_mb: int = 256
+    invoked_function_arn: str = "arn:aws:lambda:{{ aws_region }}:123456789012:function:test"
+    aws_request_id: str = "req-1"
+
+
+@pytest.fixture
+def invoke_function() -> InvokeFunction:
+    """Invoke the handler in-process with an event, like the Lambda runtime does."""
+
+    def invoke(event: dict[str, Any]) -> dict[str, Any]:
+        return app.lambda_handler(event=event, context=cast(LambdaContext, FakeContext()))
+
+    return invoke
+{%- endif %}

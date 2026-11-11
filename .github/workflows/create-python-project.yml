@@ -1,6 +1,7 @@
-# Creates a new repository from the python/ template, in this repository's owner
+# Creates a new generic Python repository from the python/ template, in this repository's owner
 # or in another GitHub organization given by the github_org input.
 # Run it from the Actions tab: "Create Python project" -> "Run workflow".
+# create-python-lambda-project.yml calls this workflow for Lambda projects.
 # Requires the PROJECT_CREATOR_TOKEN secret (see README.md).
 name: Create Python project
 
@@ -43,6 +44,43 @@ on:
         type: boolean
         default: false
 
+  # Used by create-python-lambda-project.yml, which adds the Lambda inputs.
+  workflow_call:
+    inputs:
+      github_org:
+        type: string
+        default: ""
+      template:
+        type: string
+        default: generic
+      project_name:
+        type: string
+        required: true
+      description:
+        type: string
+        required: true
+      python_version:
+        type: string
+        required: true
+      namespace:
+        type: string
+        default: ""
+      visibility:
+        type: string
+        required: true
+      use_pydantic:
+        type: boolean
+        default: false
+      aws_account_id:
+        type: string
+        default: ""
+      aws_region:
+        type: string
+        default: ""
+    secrets:
+      PROJECT_CREATOR_TOKEN:
+        required: false # checked in "Validate inputs" with a clearer error
+
 permissions:
   contents: read
 
@@ -60,6 +98,9 @@ jobs:
       NAMESPACE: ${{ inputs.namespace }}
       VISIBILITY: ${{ inputs.visibility }}
       USE_PYDANTIC: ${{ inputs.use_pydantic }}
+      TEMPLATE: ${{ inputs.template || 'generic' }} # the Run workflow form has no template input
+      AWS_ACCOUNT_ID: ${{ inputs.aws_account_id }}
+      AWS_REGION: ${{ inputs.aws_region }}
       TEMPLATE_REPO: ${{ github.repository }}
     steps:
       - name: Validate inputs
@@ -68,6 +109,10 @@ jobs:
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::Secret PROJECT_CREATOR_TOKEN is not set. See README.md."
+            exit 1
+          fi
+          if [[ "$TEMPLATE" != "generic" && "$TEMPLATE" != "lambda" ]]; then
+            echo "::error::Unknown template '$TEMPLATE' (generic or lambda)."
             exit 1
           fi
           if ! [[ "$ORGANIZATION" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]]; then
@@ -90,6 +135,16 @@ jobs:
             echo "::error::Please avoid double quotes and backslashes in the description."
             exit 1
           fi
+          if [[ "$TEMPLATE" == "lambda" ]]; then
+            if ! [[ "$AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]; then
+              echo "::error::A Lambda project needs the 12-digit AWS account ID, got '$AWS_ACCOUNT_ID'."
+              exit 1
+            fi
+            if ! [[ "$AWS_REGION" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]$ ]]; then
+              echo "::error::Invalid AWS region '$AWS_REGION', e.g. eu-central-1."
+              exit 1
+            fi
+          fi
           if gh repo view "$ORGANIZATION/$PROJECT_NAME" >/dev/null 2>&1; then
             echo "::error::Repository $ORGANIZATION/$PROJECT_NAME already exists."
             exit 1
@@ -106,8 +161,14 @@ jobs:
 
       - name: Render template
         run: |
+          aws_args=()
+          if [[ "$TEMPLATE" == "lambda" ]]; then
+            aws_args=(--data aws_account_id="$AWS_ACCOUNT_ID" --data aws_region="$AWS_REGION")
+          fi
           uvx copier copy --defaults \
             --data language=python \
+            --data template="$TEMPLATE" \
+            "${aws_args[@]}" \
             --data project_name="$PROJECT_NAME" \
             --data description="$DESCRIPTION" \
             --data python_version="$PYTHON_VERSION" \
@@ -135,7 +196,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Initial commit from project-templates" \
+          git commit -m "Initial commit from project-templates ($TEMPLATE)" \
                      -m "Requested by $ACTOR via $RUN_URL"
           gh auth setup-git
           gh repo create "$ORGANIZATION/$PROJECT_NAME" "--$VISIBILITY" \

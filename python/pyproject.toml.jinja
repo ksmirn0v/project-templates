@@ -1,10 +1,13 @@
 [project]
 name = "{{ distribution_name }}"
-version = "0.1.0"
+version = "0.0.0"  # placeholder: releases are version tags (see README.md)
 description = "{{ description }}"
 readme = "README.md"
 requires-python = ">={{ python_version }}"
 dependencies = [
+{%- if template == 'lambda' %}
+    "aws-lambda-powertools>=3.39",
+{%- endif %}
 {%- if use_pydantic %}
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
@@ -19,6 +22,10 @@ dev = [
     "pytest-cov>=6",
     "pre-commit>=4",
     "pytest-bdd>=9.0.1",
+{%- if template == 'lambda' %}
+    "boto3>=1.43",  # E2E tests: invoke the deployed function
+    "boto3-stubs[lambda]>=1.43",
+{%- endif %}
 ]
 
 [build-system]
@@ -83,7 +90,11 @@ plugins = ["pydantic.mypy"]
 
 # --- pytest --------------------------------------------------------
 [tool.pytest.ini_options]
+{%- if template == 'lambda' %}
+testpaths = ["tests/unit", "tests/integration"]  # tests/e2e need a deployed function: make e2e
+{%- else %}
 testpaths = ["tests"]
+{%- endif %}
 addopts = "-ra --strict-markers --cov={{ import_path }} --cov-report=term-missing"
 bdd_features_base_dir = "tests/integration/features"
 

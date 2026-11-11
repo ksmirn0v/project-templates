@@ -1,0 +1,6 @@
+"""Structured JSON logger shared by all modules."""
+
+from aws_lambda_powertools import Logger
+
+
+logger = Logger(service="{{ project_name }}")  # fixed: takes precedence over POWERTOOLS_SERVICE_NAME

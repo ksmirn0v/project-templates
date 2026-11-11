@@ -1,0 +1,56 @@
+# syntax=docker/dockerfile:1
+# Build from the repository root (the build context), e.g.:
+#   docker build -f infra/docker/Dockerfile --target runtime -t {{ project_name }} .
+#   docker build -f infra/docker/Dockerfile --target test -t {{ project_name }}:test .
+#   docker run --rm {{ project_name }}:test
+
+ARG PYTHON_VERSION={{ python_version }}
+
+FROM ghcr.io/astral-sh/uv:0.13.7 AS uv
+
+
+# ---- build: locked runtime dependencies and the package, installed into /package ----
+FROM public.ecr.aws/lambda/python:${PYTHON_VERSION} AS build
+COPY --from=uv /uv /bin/uv
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_NO_CACHE=1 \
+    UV_PYTHON=/var/lang/bin/python3 \
+    UV_PYTHON_DOWNLOADS=never
+WORKDIR /build
+
+# Dependencies before the code, so this layer is reused while only the code changes.
+COPY pyproject.toml uv.lock README.md ./
+RUN uv export --frozen --no-dev --no-emit-project --output-file requirements.txt \
+ && uv pip install --require-hashes --target /package --requirement requirements.txt
+
+# Installed with its metadata, so that importlib.metadata.version() works.
+COPY src ./src
+RUN uv pip install --no-deps --target /package .
+
+
+# ---- test: the full test suite on the same base image as the runtime ----
+FROM public.ecr.aws/lambda/python:${PYTHON_VERSION} AS test
+COPY --from=uv /uv /bin/uv
+ENV UV_NO_CACHE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON=/var/lang/bin/python3 \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH="/opt/venv/bin:${PATH}"
+WORKDIR /project
+
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-install-project
+
+COPY src ./src
+COPY tests ./tests
+RUN uv sync --frozen
+
+# Extra arguments are passed to pytest, e.g. `docker run --rm <image> tests/integration`.
+ENTRYPOINT ["pytest"]
+
+
+# ---- runtime (default target): the Lambda function image ----
+FROM public.ecr.aws/lambda/python:${PYTHON_VERSION} AS runtime
+COPY --from=build /package ${LAMBDA_TASK_ROOT}
+CMD ["{{ import_path }}.app.lambda_handler"]

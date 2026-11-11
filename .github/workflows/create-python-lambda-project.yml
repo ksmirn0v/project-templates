@@ -1,0 +1,75 @@
+# Creates a new Python AWS Lambda repository from the python/ template, in this repository's owner
+# or in another GitHub organization given by the github_org input.
+# Run it from the Actions tab: "Create Python Lambda project" -> "Run workflow".
+# It only adds the Lambda inputs and calls create-python-project.yml, which does the work.
+# Requires the PROJECT_CREATOR_TOKEN secret (see README.md).
+name: Create Python Lambda project
+
+on:
+  workflow_dispatch:
+    inputs:
+      github_org:
+        description: "Under which organization you'd like to create a project?"
+        required: false
+        type: string
+        default: ""
+      project_name:
+        description: "What is your project name (kebab-case)?"
+        required: true
+        type: string
+      description:
+        description: "What is your project description?"
+        required: true
+        type: string
+      python_version:
+        description: "What Python version do you want to use?"
+        required: true
+        type: choice
+        options: [ "3.12", "3.13" ]
+        default: "3.12"
+      namespace:
+        description: "What is your package namespace (src/<namespace>/<package>)? Leave empty for src/<package>"
+        required: false
+        type: string
+        default: ""
+      visibility:
+        description: "What's the level of visibility do you want to choose for the repository?"
+        required: true
+        type: choice
+        options: [ private, internal ]
+        default: private
+      use_pydantic:
+        description: "Do you want to add Pydantic as a dependency?"
+        required: true
+        type: boolean
+        default: false
+      aws_account_id:
+        description: "What is the AWS account ID (12 digits) of the function?"
+        required: true
+        type: string
+      aws_region:
+        description: "What is the AWS region of the function?"
+        required: true
+        type: string
+        default: "eu-central-1"
+
+permissions:
+  contents: read
+
+# The concurrency group is set in create-python-project.yml; the same group here would block it.
+jobs:
+  create:
+    uses: ./.github/workflows/create-python-project.yml
+    with:
+      template: lambda
+      github_org: ${{ inputs.github_org }}
+      project_name: ${{ inputs.project_name }}
+      description: ${{ inputs.description }}
+      python_version: ${{ inputs.python_version }}
+      namespace: ${{ inputs.namespace }}
+      visibility: ${{ inputs.visibility }}
+      use_pydantic: ${{ inputs.use_pydantic }}
+      aws_account_id: ${{ inputs.aws_account_id }}
+      aws_region: ${{ inputs.aws_region }}
+    secrets:
+      PROJECT_CREATOR_TOKEN: ${{ secrets.PROJECT_CREATOR_TOKEN }}

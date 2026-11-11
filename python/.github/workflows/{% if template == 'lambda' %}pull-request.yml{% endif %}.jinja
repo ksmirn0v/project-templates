@@ -1,0 +1,185 @@
+name: Pull request
+
+# The title check (it decides the release version on merge, see master-push.yml), the checks,
+# then the pull request's image on the test environment:
+# build and push it to ECR, switch the test function to it, and run the E2E tests against it.
+# The AWS jobs run in the GitHub environment `test`, the only jobs the test deploy role trusts.
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+# A newer push to the pull request cancels the run that is still going.
+concurrency:
+  group: pull-request-{% raw %}${{ github.event.pull_request.number }}{% endraw %}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  AWS_REGION: {{ aws_region }}
+  AWS_ROLE_ARN: arn:aws:iam::{{ aws_account_id }}:role/{{ aws_deploy_role_name }}-test
+  ECR_REGISTRY: {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
+  ECR_REPOSITORY: {{ ecr_repository }}
+  FUNCTION_NAME: {{ aws_function_name }}-test
+  # The image is the pull request's head commit (not GitHub's temporary merge commit), tagged
+  # e2e-<first 8 characters of the commit>; tags are immutable in ECR, so a tag always means that commit.
+  HEAD_SHA: {% raw %}${{ github.event.pull_request.head.sha }}{% endraw %}
+{% raw %}
+jobs:
+  title:
+    name: Title Version Prefix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read  # the current title
+    steps:
+      - uses: actions/checkout@v7
+
+      # Read now, not from the event: after editing the title, re-run this job to check it again.
+      # [MAJOR] / [MINOR] / [PATCH] release on merge; no prefix releases nothing; any other prefix fails.
+      - name: Check the title's version prefix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)
+          version=$(.github/scripts/next-version.sh "$title" "")  # fails the step on an invalid prefix
+          if [[ -n "$version" ]]; then
+            message="Merging releases a new version (${title%%]*}])"
+          else
+            message="No version prefix: merging releases and deploys nothing"
+          fi
+          echo "::notice::$message"
+          echo "$message" >> "$GITHUB_STEP_SUMMARY"
+
+  checks:
+    name: Lint, Type Checks and Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Checks
+        run: make check
+
+  image:
+    name: Build and Push Image
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: test
+    permissions:
+      contents: read
+      id-token: write  # GitHub OIDC token for AWS
+    steps:
+      - name: Image tag
+        run: echo "IMAGE_TAG=e2e-${HEAD_SHA::8}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.HEAD_SHA }}
+
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # A re-run of the same commit finds its image already pushed (and could not overwrite it).
+      - name: Look up the image
+        id: lookup
+        run: |
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$IMAGE_TAG" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Image $IMAGE_TAG is already in ECR, skipping the build" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The Lambda image is arm64, built on an x86 runner.
+      - uses: docker/setup-qemu-action@v4.4.0
+        if: steps.lookup.outputs.exists == 'false'
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v4.4.1
+        if: steps.lookup.outputs.exists == 'false'
+
+      - name: Log in to ECR
+        if: steps.lookup.outputs.exists == 'false'
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+      - uses: docker/build-push-action@v7.4.0
+        if: steps.lookup.outputs.exists == 'false'
+        with:
+          context: .
+          file: infra/docker/Dockerfile
+          target: runtime
+          platforms: linux/arm64
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          push: true
+          # Lambda takes a single-platform image manifest, not an index with attestations.
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-test:
+    name: Deploy Test and E2E Tests
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: test
+    permissions:
+      contents: read
+      id-token: write  # GitHub OIDC token for AWS
+    # One pull request at a time on the test function, from the deploy to the end of its E2E tests;
+    # never cancelled half-way (a newer pending run replaces an older pending one).
+    concurrency:
+      group: ${{ github.event.repository.name }}-test
+      cancel-in-progress: false
+    steps:
+      - name: Image tag
+        run: echo "IMAGE_TAG=e2e-${HEAD_SHA::8}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.HEAD_SHA }}
+
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy the image to the test function
+        run: |
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --image-uri "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            --query '{Function: FunctionName, Image: CodeSha256}' --output text
+          aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME"
+          echo "Deployed $IMAGE_TAG to $FUNCTION_NAME" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: E2E tests
+        run: make e2e E2E_FUNCTION_NAME="$FUNCTION_NAME"
+{%- endraw %}

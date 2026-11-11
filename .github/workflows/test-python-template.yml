@@ -13,11 +13,12 @@ permissions:
 
 jobs:
   render-and-check:
-    name: pydantic=${{ matrix.use_pydantic }} / ns=${{ matrix.namespace || 'none' }} / py${{ matrix.python_version }}
+    name: ${{ matrix.template }} / pydantic=${{ matrix.use_pydantic }} / ns=${{ matrix.namespace || 'none' }} / py${{ matrix.python_version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        template: [generic, lambda]
         use_pydantic: [false, true]
         namespace: ["", "acme"]
         python_version: ["3.12", "3.13"]
@@ -31,11 +32,14 @@ jobs:
 
       - name: Render template from this commit
         env:
+          TEMPLATE: ${{ matrix.template }}
           USE_PYDANTIC: ${{ matrix.use_pydantic }}
           NAMESPACE: ${{ matrix.namespace }}
           PYTHON_VERSION: ${{ matrix.python_version }}
         run: |
           uvx copier copy --defaults --vcs-ref HEAD \
+            --data template="$TEMPLATE" \
+            --data aws_account_id="123456789012" \
             --data project_name="demo" \
             --data description="Template smoke test" \
             --data use_pydantic="$USE_PYDANTIC" \
@@ -50,3 +54,10 @@ jobs:
           uv sync
           make check
           uv run pre-commit run --all-files
+
+      # The Lambda Dockerfile: builds the test image and runs the test suite in it (native platform).
+      - name: Build and test the Lambda image
+        if: matrix.template == 'lambda'
+        run: |
+          cd "$RUNNER_TEMP/demo"
+          make image-test PLATFORM=linux/amd64 IMAGE_TAG=ci

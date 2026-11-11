@@ -1,0 +1,64 @@
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import boto3
+import pytest
+from pytest_bdd import parsers, scenarios, then, when
+
+
+if TYPE_CHECKING:
+    from mypy_boto3_lambda import LambdaClient
+
+
+scenarios("invoke.feature", features_base_dir=str(Path(__file__).parents[1] / "features"))
+
+
+@dataclass
+class Invocation:
+    status_code: int = 0
+    function_error: str | None = None
+    result: Any = None
+
+
+@pytest.fixture(scope="session")
+def function_name() -> str:
+    """Name of the deployed function, e.g. E2E_FUNCTION_NAME={{ aws_function_name }}-test."""
+    return os.environ["E2E_FUNCTION_NAME"]
+
+
+@pytest.fixture(scope="session")
+def lambda_client() -> "LambdaClient":
+    return boto3.client(service_name="lambda")
+
+
+@pytest.fixture
+def invocation() -> Invocation:
+    return Invocation()
+
+
+# ---------- when ----------
+
+
+@when(name=parsers.parse(name="the function is invoked with {event}"))
+def function_is_invoked(invocation: Invocation, lambda_client: "LambdaClient", function_name: str, event: str) -> None:
+    response = lambda_client.invoke(FunctionName=function_name, Payload=event.encode())
+    invocation.status_code = response["StatusCode"]
+    invocation.function_error = response.get("FunctionError")
+    invocation.result = json.loads(s=response["Payload"].read())
+
+
+# ---------- then ----------
+
+
+@then(name="the invocation succeeds")
+def invocation_succeeds(invocation: Invocation) -> None:
+    assert invocation.status_code == 200
+    assert invocation.function_error is None, f"{invocation.function_error}: {invocation.result}"
+
+
+@then(name=parsers.parse(name="the result is {result}"))
+def result_is(invocation: Invocation, result: str) -> None:
+    assert invocation.result == json.loads(s=result)

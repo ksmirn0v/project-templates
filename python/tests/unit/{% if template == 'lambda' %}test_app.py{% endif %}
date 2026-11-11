@@ -1,0 +1,9 @@
+from conftest import InvokeFunction
+
+
+def test__when_invoked_with_an_event__then_status_ok(invoke_function: InvokeFunction) -> None:
+    assert invoke_function({"key": "value"}) == {"status": "ok"}
+
+
+def test__when_invoked_with_an_empty_event__then_status_ok(invoke_function: InvokeFunction) -> None:
+    assert invoke_function({}) == {"status": "ok"}

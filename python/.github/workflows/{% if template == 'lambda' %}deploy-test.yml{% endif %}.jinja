@@ -1,0 +1,85 @@
+name: Deploy test
+
+# Deploys a release to the test function:
+# - called by master-push.yml with the version it just released;
+# - or by hand: Actions -> Deploy test -> Run workflow, and pick the version tag (e.g. 1.4.2)
+#   under "Use workflow from"; or `gh workflow run deploy-test.yml --ref 1.4.2`. Branches are refused.
+# The version selects the image `{{ ecr_repository }}:<version>` pushed by master-push.yml.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version to deploy (major.minor.patch)
+        type: string
+        required: true
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  AWS_REGION: {{ aws_region }}
+  AWS_ROLE_ARN: arn:aws:iam::{{ aws_account_id }}:role/{{ aws_deploy_role_name }}-test
+  ECR_REGISTRY: {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
+  ECR_REPOSITORY: {{ ecr_repository }}
+  FUNCTION_NAME: {{ aws_function_name }}-test
+{%- raw %}
+  # Called: the input (github.ref is the caller's, e.g. master). By hand: the selected tag.
+  VERSION: ${{ inputs.version || github.ref_name }}
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.version || github.ref_name }} to Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: test  # the test role trusts only this environment
+    permissions:
+      contents: read
+      id-token: write  # GitHub OIDC token for AWS
+    # Deploys run one at a time and are never cancelled half-way.
+    concurrency:
+      group: deploy-test
+      cancel-in-progress: false
+    steps:
+      - name: Check the version
+        env:
+          CALLED_WITH: ${{ inputs.version }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          if [[ -z "$CALLED_WITH" && "$REF_TYPE" != "tag" ]]; then
+            echo "::error::Run this workflow from a version tag (major.minor.patch), not the $REF_TYPE '$VERSION'"
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Not a version (major.minor.patch): '$VERSION'"
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check the image
+        run: |
+          found=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$VERSION" \
+            --query 'length(images)' --output text)
+          if [[ "$found" != "1" ]]; then
+            echo "::error::No image $ECR_REPOSITORY:$VERSION in ECR (did master-push finish for this version?)"
+            exit 1
+          fi
+
+      - name: Deploy the image
+        run: |
+          previous=$(aws lambda get-function --function-name "$FUNCTION_NAME" --query 'Code.ImageUri' --output text)
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --image-uri "$ECR_REGISTRY/$ECR_REPOSITORY:$VERSION" \
+            --query '{Function: FunctionName, Image: CodeSha256}' --output text
+          aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME"
+          echo "Deployed $VERSION to $FUNCTION_NAME (previous image: ${previous##*/})" >> "$GITHUB_STEP_SUMMARY"
+{%- endraw %}

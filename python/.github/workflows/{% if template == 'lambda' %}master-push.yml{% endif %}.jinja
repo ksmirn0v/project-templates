@@ -1,0 +1,169 @@
+name: Master push
+
+# Releases every merge to master:
+#   checks -> version tag (from the merged PR title: [MAJOR] / [MINOR] / [PATCH]) -> image `<version>`
+#   in ECR -> deploy test (deploy-test.yml). Prod is deployed by hand, from a version tag (deploy-prod.yml).
+# A title without a prefix is no release: only the checks run (no tag, no image, no deploy).
+# The git tag is created once the checks pass and before the image, so a version always belongs
+# to exactly one commit, and a re-run of a failed run reuses the version of its commit.
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+# Releases run one at a time and are never cancelled half-way.
+concurrency:
+  group: master-push
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  AWS_REGION: {{ aws_region }}
+  AWS_TEST_ROLE_ARN: arn:aws:iam::{{ aws_account_id }}:role/{{ aws_deploy_role_name }}-test
+  ECR_REGISTRY: {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
+  ECR_REPOSITORY: {{ ecr_repository }}
+{% raw %}
+jobs:
+  checks:
+    name: Lint, Type Checks and Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Checks
+        run: make check
+
+  version:
+    name: Version Tag
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write  # push the tag
+      pull-requests: read  # title of the merged pull request
+    outputs:
+      version: ${{ steps.tag.outputs.version }}  # empty: no release
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # all tags
+
+      - name: Create the version tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          versions() { grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1; }
+
+          # A re-run of this commit keeps the version it already got.
+          version=$(git tag --points-at "$GITHUB_SHA" | versions || true)
+          if [[ -n "$version" ]]; then
+            echo "Commit already tagged $version" >> "$GITHUB_STEP_SUMMARY"
+          else
+            title=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].title // ""')
+            latest=$(git tag --list | versions || true)
+            version=$(.github/scripts/next-version.sh "$title" "$latest")
+            if [[ -z "$version" ]]; then
+              echo "No version prefix, no release: $title" >> "$GITHUB_STEP_SUMMARY"
+            else
+              git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                tag --annotate "$version" --message "$title" "$GITHUB_SHA"
+              git push origin "refs/tags/$version"
+              echo "Tagged $version (previous: ${latest:-none}) from: $title" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  image:
+    name: Build and Push Image
+    needs: version
+    if: needs.version.outputs.version != ''  # a release only
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: test  # the test role is the one allowed to push images
+    permissions:
+      contents: read
+      id-token: write  # GitHub OIDC token for AWS
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      # The image's package reports the release (`__version__`); the repository keeps 0.0.0.
+      - name: Set the package version
+        run: uv version "$VERSION" --frozen
+
+      - uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ env.AWS_TEST_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # A re-run finds the image of its version already pushed (and could not overwrite it).
+      - name: Look up the image
+        id: lookup
+        run: |
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$VERSION" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Image $VERSION is already in ECR, skipping the build" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The Lambda image is arm64, built on an x86 runner.
+      - uses: docker/setup-qemu-action@v4.4.0
+        if: steps.lookup.outputs.exists == 'false'
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v4.4.1
+        if: steps.lookup.outputs.exists == 'false'
+
+      - name: Log in to ECR
+        if: steps.lookup.outputs.exists == 'false'
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+      - uses: docker/build-push-action@v7.4.0
+        if: steps.lookup.outputs.exists == 'false'
+        with:
+          context: .
+          file: infra/docker/Dockerfile
+          target: runtime
+          platforms: linux/arm64
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.VERSION }}
+          labels: |
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          push: true
+          # Lambda takes a single-platform image manifest, not an index with attestations.
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-test:
+    name: Deploy Test
+    needs: [version, image]
+    if: needs.version.outputs.version != ''  # a release only
+    uses: ./.github/workflows/deploy-test.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+    permissions:
+      contents: read
+      id-token: write  # GitHub OIDC token for AWS, in the called workflow
+{%- endraw %}
