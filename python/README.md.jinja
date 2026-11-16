@@ -21,7 +21,7 @@ make install   # venv, dependencies, git hooks
 make check     # lint, type checks, tests — same as CI
 ```
 
-## Development
+### Commands
 
 | Command      | Description |
 | ------------ | ----------- |
@@ -31,36 +31,64 @@ make check     # lint, type checks, tests — same as CI
 | `make test`  | pytest with coverage (min 80%) |
 | `make build` | Build wheel into `dist/`       |
 {%- if template == 'lambda' %}
-| `make e2e E2E_FUNCTION_NAME=...` | E2E tests against a deployed function |
+| `make e2e`   | E2E tests against `{{ aws_function_name }}-test` (another function: `E2E_FUNCTION_NAME=...`) |
 | `make image`      | Build the Lambda image (`linux/arm64`), tagged with the git commit |
 | `make image-test` | Build the test image and run the test suite in a container |
 {%- endif %}
 
 New dependencies can be added with `uv add <pkg>` (dev tools: `uv add --dev <pkg>`).
 
+### Local Run
+
+A guide how to run the code locally (if possible).
+
 
 ## CI/CD
 
 GitHub Actions workflows in `.github/workflows/`:
 
-| Workflow           | Trigger                            | Steps |
-| ------------------ | ---------------------------------- | ----- |
-| `branch-push.yml`  | push to any branch except `master` | lint, type checks, tests |
+1. `branch-push.yml`: push to any branch except `master`
+   - lint, type checks, tests
+
 {%- if template == 'lambda' %}
-| `pull-request.yml` | pull request to `master`           | title prefix check (release or not); lint, type checks, tests; build the image of the head commit and push it to ECR (`{{ ecr_repository }}:e2e-<first 8 characters of the sha>`, skipped if already there); switch `{{ aws_function_name }}-test` to it; E2E tests |
-| `master-push.yml`  | push to `master`                   | lint, type checks, tests; with a version prefix: version tag, image `<version>` to ECR, `deploy-test.yml` |
-| `deploy-test.yml`  | called by `master-push.yml`, or by hand from a version tag | check the version and its image; deploy test |
-| `deploy-prod.yml`  | by hand, from a version tag        | check the tag and its image; deploy prod |
+2. `pull-request.yml`: pull request to `master`
+   - title prefix check (release or not)
+   - lint, type checks, tests
+   - build the image of the head commit and push it to ECR (`{{ ecr_repository }}:e2e-<first 8 characters of the sha>`, skipped if already there)
+   - switch `{{ aws_function_name }}-test` to the new image
+   - E2E tests
+
+3. `master-push.yml`: push to `master`
+   - lint, type checks, tests
+   - with a version prefix
+     - version tag
+     - image `<version>` to ECR
+     - `deploy-test.yml`
+
+4. `deploy-test.yml`: called by `master-push.yml`, or by hand from a version tag
+   - check the version and its image
+   - deploy test
+
+5. `deploy-prod.yml`: by hand, from a version tag
+   - check the tag and its image
+   - deploy prod
 {%- else %}
-| `pull-request.yml` | pull request to `master`           | title prefix check (release or not); lint, type checks, tests |
-| `master-push.yml`  | push to `master`                   | lint, type checks, tests; with a version prefix: version tag |
+
+2. `pull-request.yml`: pull request to `master`
+   - title prefix check (release or not)
+   - lint, type checks, tests
+
+3. `master-push.yml`: push to `master`
+   - lint, type checks, tests
+   - with a version prefix
+     - version tag
 {%- endif %}
 
 ### Releases
 
-A merge to `master` is a release `major.minor.patch` when the title of the merged pull request
-starts with a version prefix; the prefix decides the version (`.github/scripts/next-version.sh`),
-from the latest version tag:
+The releases are marked with a version tag `major.minor.patch`.
+The prefix of the pull request tells if a merge to `master` is a release candidate or not.
+The prefixes have the following rules:
 
 | Title starts with | Example           |
 | ----------------- | ----------------- |
@@ -68,41 +96,42 @@ from the latest version tag:
 | `[MINOR]`         | `1.4.2` → `1.5.0` |
 | `[PATCH]`         | `1.4.2` → `1.4.3` |
 
-The first release is `1.0.0`. A title without a prefix releases nothing (for changes such as README
-or workflows). Any other prefix, e.g. `[minor]` or `[WIP]`, fails the pull request's job
-"Title Version Prefix", which also reports whether the merge will release; after editing the title,
-re-run it. The tag is created on the merge commit once the checks pass, and a re-run of a failed
-release keeps its version. `pyproject.toml` keeps the placeholder version `0.0.0`.
+If no prefix is specified, then the merged changed is not considered a release candidate.
+
+The first release is `1.0.0`.
+
 {%- if template == 'lambda' %}
-The image is `{{ ecr_repository }}:<version>` and its package reports that version (`__version__`).
+The Docker images in ECR are versioned: `{{ ecr_repository }}:<version>`
 
-### Deploys
+### Manual Deployment
 
-`deploy-test.yml` deploys every release to test (called by `master-push.yml`). Both deploy
-workflows also run by hand: Actions → Deploy test / Deploy prod → Run workflow, and pick the
-version tag under "Use workflow from" (a branch is refused). From a terminal:
+Deploys require specifying the version.
+Both deploy scripts can be run manually with:
 
 ```bash
 gh workflow run deploy-test.yml --ref 1.4.2
 gh workflow run deploy-prod.yml --ref 1.4.2
 ```
 
-An older tag rolls back.
-
 ### AWS Prerequisites
 
-The workflows deploy into existing resources (e.g. created by an infrastructure project),
-in account `{{ aws_account_id }}`, region `{{ aws_region }}`:
+The workflows deploy into existing resources (e.g. created by an infrastructure project):
+- account `{{ aws_account_id }}`
+- region `{{ aws_region }}`
 
-| Resource | Name |
-| -------- | ---- |
-| ECR repository (immutable tags) | `{{ ecr_repository }}` |
-| Lambda functions (container image, `arm64`) | `{{ aws_function_name }}-test`, `{{ aws_function_name }}-prod` |
-| IAM roles for GitHub OIDC | `{{ aws_deploy_role_name }}-test`, `{{ aws_deploy_role_name }}-prod` |
+The deployed resources:
+- ECR image
+  - `{{ ecr_repository }}`
+- Lambda functions (with a container image, `arm64`)
+  - `{{ aws_function_name }}-test`
+  - `{{ aws_function_name }}-prod`
+- IAM roles for GitHub OIDC
+  - `{{ aws_deploy_role_name }}-test`
+  - `{{ aws_deploy_role_name }}-prod`
 
-The test role pushes images, updates the test function and invokes it (E2E tests);
-the prod role updates the prod function. In the repository settings, create the GitHub
-environments `test` and `prod`; each role trusts only the jobs of its environment.
+The test role pushes images, updates the test function and invokes it (E2E tests).
+The prod role updates the prod function. In the repository settings, create the GitHub
+environments `test` and `prod`. Each role trusts only the jobs of its environment.
 {%- endif %}
 
 

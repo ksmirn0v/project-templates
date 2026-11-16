@@ -7,6 +7,9 @@ DOCKERFILE := infra/docker/Dockerfile
 IMAGE_NAME ?= {{ project_name }}
 IMAGE_TAG ?= $(shell git rev-parse --short=12 HEAD)
 PLATFORM ?= linux/arm64
+
+# Deployed function the E2E tests invoke; override for another one, e.g. make e2e E2E_FUNCTION_NAME=nb1-blood-tests-text-extractor-prod
+E2E_FUNCTION_NAME ?= {{ aws_function_name }}-test
 {%- else %}
 .PHONY: install fmt lint type test check build
 {%- endif %}
@@ -30,8 +33,8 @@ test: ## Run tests with coverage
 	uv run pytest
 {%- if template == 'lambda' %}
 
-e2e: ## E2E tests against a deployed function, e.g. make e2e E2E_FUNCTION_NAME={{ aws_function_name }}-test
-	uv run pytest tests/e2e --no-cov
+e2e: ## E2E tests against the deployed test function (or E2E_FUNCTION_NAME=...)
+	E2E_FUNCTION_NAME=$(E2E_FUNCTION_NAME) uv run pytest tests/e2e --no-cov
 {%- endif %}
 
 check: lint type test ## Everything CI runs
