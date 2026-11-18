@@ -1,0 +1,169 @@
+# CLAUDE.md
+
+## Project
+
+{% if template == 'lambda' -%}
+AWS Lambda `{{ aws_function_name }}-<env>` (`<env>`: `test`, `prod`): {{ description }}
+
+The function runs as a container image (`infra/docker/Dockerfile`), deployed by the GitHub Actions workflows
+(see `README.md`). Its triggers, permissions and other AWS resources are managed outside this repository.
+{%- else -%}
+Python package `{{ distribution_name }}` (`import {{ import_path }}`): {{ description }}
+{%- endif %}
+
+<!-- Describe what Claude needs to know and cannot read from the code: the source of truth
+(architecture doc, ticket), what the project does in short, and its hard constraints
+(e.g. what must never be logged, what it may read and write). -->
+
+## Commands
+
+```bash
+make fmt    # format and auto-fix
+make check  # lint, mypy (strict), tests — run before finishing any change
+```
+
+## Code style
+
+### Keyword arguments
+
+Call functions with keyword arguments whenever the signature allows it.
+Positional arguments are fine only for positional-only parameters (`len`, `sorted`, `dict.get`, `str.split`)
+and for the single obvious argument of a builtin.
+
+```python
+# yes
+order = create_order(customer=customer, items=items, currency=currency)
+logger.info("Order created", extra={"order_id": order.id})
+
+# no
+order = create_order(customer, items, currency)
+```
+
+### Functions and constants are used through their module
+
+When a module-level function or constant of this project is used in another module, import its module and call it
+through the module name, so the call site shows where it comes from. Classes and type aliases are imported by name.
+
+{% if template == 'lambda' -%}
+Exceptions, imported by name: the shared `logger` (`from {{ import_path }}.config.log import logger`) and anything
+tests take from `conftest`.
+{%- else -%}
+Exception, imported by name: anything tests take from `conftest`.
+{%- endif %}
+
+```python
+# yes
+from {{ import_path }}.utils import text
+
+slug = text.slugify(text=title)
+
+# no
+from {{ import_path }}.utils.text import slugify
+
+slug = slugify(text=title)
+```
+
+### One element per line
+
+"Short line" below means roughly under 100 characters. When elements are split, put each one on its own line
+and end with a trailing comma, so `ruff format` keeps them split. When they stay on one line, use no trailing comma.
+
+- **Imports:** up to 3 names on one line if the line is short. Otherwise, use brackets with one name per line.
+- **Function calls and class instantiation:** up to 3 arguments on one line if the line is short.
+  Otherwise, one argument per line.
+- **Lists of states** (statuses, enum-like values): one value per line.
+- **Lists of dictionaries:** one dictionary per line.
+- **Other lists:** decide by context; short lists of simple values can stay on one line.
+- **Dictionaries:** a short dictionary stays on one line. Otherwise, one key-value pair per line.
+
+```python
+from dataclasses import dataclass, field
+from pytest_bdd import (
+    parsers,
+    scenarios,
+    then,
+    when,
+)
+
+ORDER_STATUSES = [
+    "pending",
+    "paid",
+    "shipped",
+]
+
+ITEMS = [
+    {"sku": "A-100", "quantity": 2, "price": "9.99"},
+    {"sku": "B-200", "quantity": 1, "price": "24.50"},
+]
+
+RETRY_DELAYS = [1, 2, 4]
+
+total = calculate_total(items=items, currency=currency)
+price = Money(amount=amount, currency="EUR")
+line = OrderLine(
+    order_id=order.id,
+    sku=item.sku,
+    quantity=item.quantity,
+    unit_price=item.price,
+)
+
+logger.info("Order created", extra={"order_id": order.id, "items": len(items)})
+summary = {
+    "order_id": order.id,
+    "customer_id": customer.id,
+    "status_counts": status_counts,
+}
+```
+
+### Self-explanatory code over comments
+
+- Names carry the meaning: `unit_price`, `retry_delay`, `is_active` — not `p`, `d`, `flag`.
+- Extract a well-named method or constant instead of explaining a block with a comment.
+- Write a comment only for the *why* that the code cannot say (a business rule, an external API quirk, a link to
+  the doc).
+- Docstrings stay (ruff `D`, Google style), but keep them to what the signature does not already say.
+
+### Compact code, few special cases
+
+{% if template == 'lambda' -%}
+- Handle only the failures that matter for the flow: the ones that change the result or must reach monitoring.
+  Let anything else raise; the invocation fails, and the caller's or event source's retries (and a DLQ, if any)
+  handle it.
+{%- else -%}
+- Handle only the failures that matter for the flow: the ones that change the result or that the caller must see.
+  Let anything else raise.
+{%- endif %}
+- No defensive checks for states the types or upstream validation already rule out.
+- No custom exception classes, wrappers or config options until there is a second real use for them.
+- Prefer data over branching: mappings, lookup tables and thresholds live in constants or data files,
+  not in `if` chains.
+- Prefer comprehensions, early returns and small methods over nested conditionals.
+
+### Logic lives in classes
+
+- Essential logic is a method of the class it belongs to: an instance method when it uses the object's state,
+  a class method for alternative constructors (`Config.load()`, `Money.parse()`), a static method
+  when it belongs to the concept but needs no state, and a `_private` method for internal steps.
+- A module-level function is allowed only when it conceptually belongs to no class (a generic helper, which goes
+  to `utils/`, e.g. `utils/text.py`)
+{%- if template == 'lambda' %} or when a framework requires one (the Lambda entry point `lambda_handler`).
+- `app.py` is the exception: `lambda_handler` only adds the invocation context to the logs and calls
+  a module-level `handle(event)`, which passes the event (or each record of a batch) to the core class.
+  Keep `handle` to that glue; the logic stays in classes.
+{%- else %}.
+{%- endif %}
+- Tests follow pytest conventions: test functions and small test helpers stay module-level.
+
+```python
+# yes
+class Money:
+    @classmethod
+    def parse(cls, text: str) -> "Money | None": ...
+
+    @staticmethod
+    def _amount(text: str) -> Decimal: ...
+
+
+# no
+def parse_money(text: str) -> tuple[Decimal, str] | None: ...
+```

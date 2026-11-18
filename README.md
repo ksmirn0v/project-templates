@@ -66,6 +66,7 @@ The resulting project has the following base structure:
 ├── .github/workflows/ (branch-push.yml, pull-request.yml, master-push.yml)
 ├── .pre-commit-config.yaml  
 ├── .python-version
+├── CLAUDE.md (if use_claude_md, the default)
 ├── Makefile
 ├── pyproject.toml
 └── .copier-answers.yml

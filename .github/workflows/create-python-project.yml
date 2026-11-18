@@ -43,6 +43,11 @@ on:
         required: true
         type: boolean
         default: false
+      use_claude_md:
+        description: "Do you want to add CLAUDE.md file?"
+        required: true
+        type: boolean
+        default: true
 
   # Used by create-python-lambda-project.yml, which adds the Lambda inputs.
   workflow_call:
@@ -71,6 +76,9 @@ on:
       use_pydantic:
         type: boolean
         default: false
+      use_claude_md:
+        type: boolean
+        default: true
       aws_account_id:
         type: string
         default: ""
@@ -98,6 +106,7 @@ jobs:
       NAMESPACE: ${{ inputs.namespace }}
       VISIBILITY: ${{ inputs.visibility }}
       USE_PYDANTIC: ${{ inputs.use_pydantic }}
+      USE_CLAUDE_MD: ${{ inputs.use_claude_md }}
       TEMPLATE: ${{ inputs.template || 'generic' }} # the Run workflow form has no template input
       AWS_ACCOUNT_ID: ${{ inputs.aws_account_id }}
       AWS_REGION: ${{ inputs.aws_region }}
@@ -174,6 +183,7 @@ jobs:
             --data python_version="$PYTHON_VERSION" \
             --data namespace="$NAMESPACE" \
             --data use_pydantic="$USE_PYDANTIC" \
+            --data use_claude_md="$USE_CLAUDE_MD" \
             template "$RUNNER_TEMP/$PROJECT_NAME"
           # Point future `copier update` runs at GitHub, not at this runner's path.
           sed -i "s|^_src_path: .*|_src_path: gh:$TEMPLATE_REPO|" "$RUNNER_TEMP/$PROJECT_NAME/.copier-answers.yml"

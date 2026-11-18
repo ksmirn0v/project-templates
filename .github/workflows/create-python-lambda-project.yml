@@ -43,6 +43,11 @@ on:
         required: true
         type: boolean
         default: false
+      use_claude_md:
+        description: "Do you want to add CLAUDE.md file?"
+        required: true
+        type: boolean
+        default: true
       aws_account_id:
         description: "What is the AWS account ID (12 digits) of the function?"
         required: true
@@ -69,6 +74,7 @@ jobs:
       namespace: ${{ inputs.namespace }}
       visibility: ${{ inputs.visibility }}
       use_pydantic: ${{ inputs.use_pydantic }}
+      use_claude_md: ${{ inputs.use_claude_md }}
       aws_account_id: ${{ inputs.aws_account_id }}
       aws_region: ${{ inputs.aws_region }}
     secrets:

@@ -48,6 +48,11 @@ use_pydantic:
   help: Do you want to add Pydantic as a dependency?
   default: false
 
+use_claude_md:
+  type: bool
+  help: Do you want to add CLAUDE.md file?
+  default: true
+
 namespace:
   type: str
   help: What is your package namespace (src/<namespace>/<package>)? Leave empty for src/<package>.
